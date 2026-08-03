@@ -1,0 +1,30 @@
+{
+  "name": "personal-vfx-workflow-assistant",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run build:local",
+    "build:github": "tsc -b && vite build --mode github && node scripts/verify-dist.mjs dist github",
+    "build:local": "tsc -b && vite build --mode localapp && node scripts/verify-dist.mjs dist local",
+    "local": "node scripts/serve-local.mjs",
+    "local:build": "npm run build:local && npm run local",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-router-dom": "^7.18.2",
+    "typescript": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "vite-plugin-pwa": "^1.3.0"
+  }
+}

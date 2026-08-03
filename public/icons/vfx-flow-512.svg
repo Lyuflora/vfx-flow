@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="VFX FLOW">
+  <rect width="512" height="512" rx="96" fill="#0d171d"/>
+  <path d="M123 325c72-125 135-176 267-192-39 35-66 75-83 120-18 54-57 91-116 112-26 9-49 18-68 23z" fill="#64d7e7"/>
+  <path d="M205 367c45-42 82-68 127-84 22-8 45-13 71-13-38 44-80 73-130 88-24 7-47 10-68 9z" fill="#9d8cff" opacity=".9"/>
+  <circle cx="142" cy="335" r="21" fill="#f3c969"/>
+</svg>

@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.tsbuildinfo/
+.env.*.local
+
+# Personal seed data stays in the local workspace and is never published.
+src/data.ts
+
+# Local screenshots, generated profiles, and asset experiments are not part
+# of the public demo repository.
+/.agents/
+/edge-ui-profile-*/
+/vfx-asset-recolor/
+/vfx-*.png
