@@ -134,6 +134,18 @@ The PWA caches the built app for offline use. When a new build is available, the
 
 The build also runs `scripts/verify-dist.mjs` to audit generated HTML, JavaScript, CSS, manifest, and service-worker output for unexpected external resources. Local-only task links are documented for the local build and rejected from the public build.
 
+## Work Pages
+
+Each task now has a separate `Work Page` tab for freeform production documentation. The existing `Notes` tab remains the lightweight structured log; Overview stays focused on the current high-signal state, while Work Page holds experiments, daily progress, references, findings, screenshots, and decisions.
+
+Work Pages use a versioned ordered block model rather than one HTML string. Supported blocks include text, headings, lists, checklists, quotes, callouts, code, dividers, images, galleries, progress updates, decisions, issues, tests, reference links, and live linked task fields. Blocks can be reordered, folded, promoted into workflow fields, searched, and exported safely. New tasks can start blank or use a Work-Type-specific suggested layout. The default task opening tab (`Overview` or `Work Page`) is stored in local preferences.
+
+The editor supports slash commands, Enter-to-create, Backspace removal, drag reordering, undo/redo, local autosave status, recovery drafts, outline navigation, progress update quick capture, and lightweight image captions/alt text/labels. Images can be pasted from the clipboard, dropped, or selected from a file picker. PNG, JPEG, WebP, and GIF files stay in browser-local IndexedDB; they are never uploaded or embedded in URLs.
+
+`Export data without attachments` remains the lightweight JSON export. `Export full backup` creates a ZIP-compatible offline archive containing `vfx-flow-backup/workspace.json`, `attachments-manifest.json`, and the original files under `attachments/`. Full restore supports Merge, Replace, and Cancel; Replace downloads an automatic full backup before clearing current attachment records. Attachment storage is separate for local and GitHub modes, just like task metadata.
+
+The public Work Page shows a one-time privacy notice explaining that pages and pasted images remain only in the current browser. No backend, account sync, analytics, AI image processing, remote image hosting, or collaboration features were added. Advanced image annotation, virtualization for very large notebooks, and cross-device synchronization remain intentionally deferred.
+
 ## Recommended next improvements
 
 ## Progressive disclosure iteration

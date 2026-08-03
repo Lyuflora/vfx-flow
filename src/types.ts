@@ -32,6 +32,72 @@ export const RELATION_TYPES = ['Variation of', 'Revisit / Polish of', 'Follow-up
 export type RelationType = (typeof RELATION_TYPES)[number]
 export type VariationDecision = 'Exploring' | 'Preferred' | 'Rejected' | 'Merged' | 'Final'
 export type TaskPageDensity = 'Lean' | 'Detailed'
+export type WorkPageDefaultTab = 'Overview' | 'Work Page'
+export type WorkPageBlockType = 'paragraph' | 'heading1' | 'heading2' | 'heading3' | 'bullet' | 'numbered' | 'checklist' | 'quote' | 'callout' | 'code' | 'divider' | 'image' | 'gallery' | 'progress' | 'decision' | 'issue' | 'test' | 'reference' | 'linked'
+export type WorkPageImageSize = 'small' | 'medium' | 'wide' | 'full'
+export type WorkPageImageAlignment = 'left' | 'center' | 'right'
+export type WorkPageGalleryLayout = 'two-column' | 'three-column' | 'comparison'
+export type WorkPageAttachmentSource = 'Clipboard' | 'Drag and drop' | 'File picker' | 'Imported backup'
+
+export interface WorkPageBlockContent {
+  text?: string
+  title?: string
+  items?: string[]
+  checked?: boolean[]
+  caption?: string
+  altText?: string
+  imageSize?: WorkPageImageSize
+  alignment?: WorkPageImageAlignment
+  attachmentId?: string
+  attachmentIds?: string[]
+  labels?: string[]
+  galleryLayout?: WorkPageGalleryLayout
+  changed?: string
+  result?: string
+  nextStep?: string
+  expandedSections?: string[]
+  url?: string
+  label?: string
+  field?: string
+  taskId?: string
+  staticCopy?: boolean
+  sourceBlockId?: string
+}
+
+export interface WorkPageBlock {
+  id: string
+  type: WorkPageBlockType
+  content: WorkPageBlockContent
+  createdAt: string
+  updatedAt: string
+  authorLabel?: string
+  collapsed?: boolean
+  tags?: string[]
+  linkedField?: string
+  attachmentIds?: string[]
+}
+
+export interface WorkPageAttachment {
+  id: string
+  taskId: string
+  fileName: string
+  mimeType: string
+  fileSize: number
+  width?: number
+  height?: number
+  createdAt: string
+  updatedAt: string
+  source: WorkPageAttachmentSource
+  blob: Blob
+  caption?: string
+  altText?: string
+}
+
+export interface WorkPageRecoveryDraft {
+  taskId: string
+  savedAt: string
+  blocks: WorkPageBlock[]
+}
 
 export interface TaskDetailPreferences {
   visibleSections: string[]
@@ -384,6 +450,7 @@ export interface Task {
   leanCanvas?: Record<string, string>
   detailPreferences?: TaskDetailPreferences
   history: HistoryEntry[]
+  workPage?: WorkPageBlock[]
 }
 
 export interface TaskTemplate {
@@ -427,6 +494,7 @@ export interface AppData {
   preferences?: {
     autoArchiveDays: 0 | 30 | 60 | 90
     taskPageDensity?: TaskPageDensity
+    defaultTaskTab?: WorkPageDefaultTab
   }
   families?: TaskFamily[]
   pipelines?: PipelineCard[]

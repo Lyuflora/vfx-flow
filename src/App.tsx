@@ -2,18 +2,21 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type * as React from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import {
-  Archive, ArrowLeft, ArrowRight, Bell, BookOpen, Check, CheckCircle2, ChevronDown, Clipboard, ClipboardCheck,
+  Archive, ArrowLeft, ArrowRight, Bell, BookOpen, Check, CheckCircle2, ChevronDown, Clipboard, ClipboardCheck, FileText,
   Clock3, Copy, Download, ExternalLink, FileJson, Filter, FolderKanban, Gauge, Inbox, LayoutDashboard, Link2,
   ListChecks, MessageSquare, MoreHorizontal, Plus, RefreshCw, Search, Send, Settings2, ShieldAlert, Sparkles, EyeOff, SlidersHorizontal,
   Target, Trash2, Upload, UserRound, WandSparkles, X, Zap, GitBranch, Layers3,
 } from 'lucide-react'
 import { buildJiraLink, defaultBugFix, defaultCreativeBrief, defaultHookup, defaultOptimization, defaultReflection, defaultResearch, defaultRequirements, defaultSubmission, defaultSubmissionChecklist, defaultTestingChecklist, initialData, makeId, migrateAppData, nowIso } from './dataMode'
-import type { AppData, BugFixDetails, ChecklistItem, Discipline, EffectType, FeedbackRequest, FeedbackStatus, FollowUp, FollowUpStatus, HistoryEntry, HookupDetails, MessageFormat, MessageTone, MessageType, NoteType, OptimizationDetails, PipelineCard, Priority, PromotedLesson, Reflection, RelationType, RequirementBreakdown, ResearchDetails, SavedView, Stage, Task, TaskDetailPreferences, TaskFamily, TaskLifecycle, TaskPageDensity, TaskRelationship, TaskTemplate, TaskUIState, VariationDecision, WorkCategory, WorkLog, WorkType } from './types'
+import type { AppData, BugFixDetails, ChecklistItem, Discipline, EffectType, FeedbackRequest, FeedbackStatus, FollowUp, FollowUpStatus, HistoryEntry, HookupDetails, MessageFormat, MessageTone, MessageType, NoteType, OptimizationDetails, PipelineCard, Priority, PromotedLesson, Reflection, RelationType, RequirementBreakdown, ResearchDetails, SavedView, Stage, Task, TaskDetailPreferences, TaskFamily, TaskLifecycle, TaskPageDensity, TaskRelationship, TaskTemplate, TaskUIState, VariationDecision, WorkCategory, WorkLog, WorkPageDefaultTab, WorkType } from './types'
 import { EFFECT_TAGS, EFFECT_TYPES, IMPACT_TAGS, MISSING_INFO, NOTE_TYPES, REFLECTION_TAGS, RELATION_TYPES, REQUIRED_STATES, STAGES, WORK_TYPES } from './types'
 import { FamiliesPage, PipelinesPage, RelatedTaskDialog, RelatedWorkDrawer, ReflectionPromotionBar, TaskContextBar, type RelatedTaskDraft } from './related'
 import { buildChangelistDescription, buildClarificationMessage, buildFeedbackMessage, buildMessage, cn, dueLabel, formatDate, formatRelative, impactReminders, initials, searchTask, stageClass } from './utils'
 import ProgressiveOverview from './ProgressiveOverview'
 import OfflineUpdatePrompt from './OfflineUpdatePrompt'
+import WorkPage, { type WorkPagePromotionTarget } from './WorkPage'
+import { deleteAttachment, listAttachments, putAttachment } from './attachmentStore'
+import { buildFullWorkspaceBackup, downloadBlob, readFullWorkspaceBackup, remapAttachmentReferences } from './workspaceBackup'
 import { APP_MODE } from './appMode'
 import './styles.css'
 
@@ -29,14 +32,14 @@ const TONES: MessageTone[] = ['Friendly and casual', 'Neutral', 'Concise', 'More
 const FORMATS: MessageFormat[] = ['Slack', 'Jira comment', 'Stand-up note']
 
 type View = 'dashboard' | 'intake' | 'workspace' | 'templates' | 'library' | 'all-tasks' | 'families' | 'pipelines'
-type WorkspaceTab = 'Overview' | 'Work Log' | 'Feedback' | 'Testing' | 'Submission' | 'Messages' | 'Reflection' | 'History'
+type WorkspaceTab = 'Overview' | 'Work Page' | 'Work Log' | 'Feedback' | 'Testing' | 'Submission' | 'Messages' | 'Reflection' | 'History'
 
 const routePath = (view: View, taskId?: string, tab?: WorkspaceTab) => view === 'workspace' && taskId ? `/workspace/${encodeURIComponent(taskId)}/${encodeURIComponent(tab ?? 'Overview')}` : `/${view}`
 const parseRoute = (pathname: string): { view: View; taskId?: string; tab?: WorkspaceTab } => {
   const parts = pathname.replace(/^\/+/, '').split('/').filter(Boolean).map((part) => decodeURIComponent(part))
   const view = parts[0] as View
   if (view === 'workspace') {
-    const validTabs: WorkspaceTab[] = ['Overview', 'Work Log', 'Feedback', 'Testing', 'Submission', 'Messages', 'Reflection', 'History']
+    const validTabs: WorkspaceTab[] = ['Overview', 'Work Page', 'Work Log', 'Feedback', 'Testing', 'Submission', 'Messages', 'Reflection', 'History']
     return { view, taskId: parts[1], tab: validTabs.includes(parts[2] as WorkspaceTab) ? parts[2] as WorkspaceTab : 'Overview' }
   }
   return { view: ['dashboard', 'intake', 'templates', 'library', 'all-tasks', 'families', 'pipelines'].includes(view) ? view : 'dashboard' }
@@ -222,7 +225,7 @@ function App() {
     setToast(`Moved ${selectedTask.name} to ${stage}`)
   }
 
-  const openTask = (id: string, tab: WorkspaceTab = 'Overview') => {
+  const openTask = (id: string, tab: WorkspaceTab = data.preferences?.defaultTaskTab ?? 'Overview') => {
     setSelectedTaskId(id)
     setActiveTab(tab)
     setView('workspace')
@@ -297,8 +300,9 @@ function App() {
     setData((current) => ({ ...current, tasks: [adjustedTask, ...current.tasks] }))
     setSelectedTaskId(adjustedTask.id)
     setView('workspace')
-    setActiveTab('Overview')
-    navigate(routePath('workspace', adjustedTask.id, 'Overview'))
+    const defaultTab = data.preferences?.defaultTaskTab ?? 'Overview'
+    setActiveTab(defaultTab)
+    navigate(routePath('workspace', adjustedTask.id, defaultTab))
     setIntake(createIntakeDraft())
     setToast('Task created')
   }
@@ -313,6 +317,39 @@ function App() {
     anchor.click()
     URL.revokeObjectURL(url)
     setToast(APP_MODE.publicDemo ? 'Public demo export created — keep sensitive data out' : 'Local workspace exported')
+  }
+
+  const exportFullBackup = async () => {
+    try {
+      const backup = await buildFullWorkspaceBackup(data, APP_VERSION)
+      downloadBlob(backup, `vfx-flow-full-backup-${new Date().toISOString().slice(0, 10)}.zip`)
+      setToast('Full workspace backup created with attachments')
+    } catch { setToast('Full backup could not be created in this browser') }
+  }
+
+  const importFullBackup = async (file: File) => {
+    try {
+      const backup = await readFullWorkspaceBackup(file)
+      const imported = migrateAppData(backup.data)
+      const choice = window.prompt('Import full workspace backup: type MERGE, REPLACE, or CANCEL.')?.trim().toUpperCase()
+      if (!choice || choice === 'CANCEL') return
+      if (!['MERGE', 'REPLACE'].includes(choice)) throw new Error('Invalid import choice')
+      const currentAttachments = await listAttachments()
+      if (choice === 'REPLACE') {
+        const currentBackup = await buildFullWorkspaceBackup(data, APP_VERSION)
+        downloadBlob(currentBackup, `vfx-flow-auto-backup-${new Date().toISOString().slice(0, 10)}.zip`)
+        await Promise.all(currentAttachments.map((attachment) => deleteAttachment(attachment.id)))
+        await Promise.all(backup.attachments.map((attachment) => putAttachment(attachment)))
+        setData(imported)
+      } else {
+        const remapped = remapAttachmentReferences(imported, backup.attachments, new Set(currentAttachments.map((attachment) => attachment.id)))
+        await Promise.all(remapped.attachments.map((attachment) => putAttachment(attachment)))
+        const merge = <T extends { id: string }>(current: T[], next: T[]) => [...current, ...next.filter((item) => !current.some((existing) => existing.id === item.id))]
+        setData((current) => ({ ...current, tasks: merge(current.tasks, remapped.data.tasks), templates: merge(current.templates, remapped.data.templates), families: merge(current.families ?? [], remapped.data.families ?? []), pipelines: merge(current.pipelines ?? [], remapped.data.pipelines ?? []), savedViews: merge(current.savedViews ?? [], remapped.data.savedViews ?? []), promotedLessons: merge(current.promotedLessons ?? [], remapped.data.promotedLessons ?? []) }))
+      }
+      setSelectedTaskId(imported.tasks[0]?.id ?? '')
+      setToast(choice === 'MERGE' ? 'Full backup merged' : 'Full backup replaced data; automatic backup downloaded')
+    } catch { setToast('That ZIP is not a valid VFX / FLOW full backup') }
   }
 
   const importData = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -375,6 +412,32 @@ function App() {
     setToast(`Note promoted to ${target}`)
   }
 
+  const promoteWorkPageBlock = (taskId: string, blockId: string, target: WorkPagePromotionTarget, text: string) => {
+    if (!text.trim()) { setToast('Add content to the block before promoting it'); return }
+    if (target === 'Family lesson' || target === 'Pipeline lesson') {
+      promoteLesson(target === 'Family lesson' ? 'Family' : 'Pipeline', text, text.split('\n')[0])
+      return
+    }
+    const current = data.tasks.find((task) => task.id === taskId)
+    if (!current) return
+    const existing = target === 'Next action' ? current.nextAction : target === 'Main blocker' ? current.blocker : target === 'Submission summary' ? current.submission.description : target === 'Reflection lesson' ? current.reflection.reusable : target === 'Current finding' ? current.leanCanvas?.currentFinding : target === 'Test result' ? current.leanCanvas?.testResult : target === 'Feedback decision' || target === 'Feedback question' ? current.latestFeedback : ''
+    const choice = existing?.trim() ? window.prompt(`This field already has content. Type APPEND, REPLACE, or CANCEL.\n\nCurrent: ${existing}`)?.trim().toUpperCase() : 'REPLACE'
+    if (!choice || choice === 'CANCEL' || !['APPEND', 'REPLACE'].includes(choice)) return
+    const value = choice === 'APPEND' && existing?.trim() ? `${existing}\n${text}` : text
+    updateTask(taskId, (task) => {
+      let next = { ...task }
+      if (target === 'Next action') next.nextAction = value
+      if (target === 'Main blocker') next.blocker = value
+      if (target === 'Current finding') next.leanCanvas = { ...(task.leanCanvas ?? {}), currentFinding: value }
+      if (target === 'Test result') next.leanCanvas = { ...(task.leanCanvas ?? {}), testResult: value }
+      if (target === 'Feedback decision' || target === 'Feedback question') next.latestFeedback = value
+      if (target === 'Submission summary') next.submission = { ...task.submission, description: value }
+      if (target === 'Reflection lesson') next.reflection = { ...task.reflection, reusable: value }
+      return addHistory(next, { type: 'Decision', label: `Promoted Work Page block to ${target}`, detail: `Source block ${blockId}: ${text}` })
+    })
+    setToast(`Work Page block promoted to ${target}`)
+  }
+
   const addFeedback = () => {
     if (!selectedTask || !feedbackDraft.question?.trim()) {
       setToast('Add a focused feedback question before saving')
@@ -414,6 +477,8 @@ function App() {
     setActiveTab(tab)
     if (selectedTask) navigate(routePath('workspace', selectedTask.id, tab))
   }
+
+  const setDefaultTaskTab = (tab: WorkPageDefaultTab) => setData((current) => ({ ...current, preferences: { ...(current.preferences ?? { autoArchiveDays: 0 }), defaultTaskTab: tab } }))
 
   const useStartingPoint = (template: TaskTemplate) => {
     const inferredWorkType = template.workType ?? (template.name.toLowerCase().includes('bug') ? 'Bug Fix' : template.name.toLowerCase().includes('optimization') ? 'Optimization' : template.name.toLowerCase().includes('hookup') ? 'Hookup / Integration' : 'New VFX')
@@ -634,7 +699,8 @@ function App() {
         {view === 'workspace' && selectedTask && <>
           <TaskContextBar task={selectedTask} data={data} onOpenFamily={openFamily} onOpenPipeline={openPipeline} onOpenRelated={() => setRelatedPanelOpen(true)} onCreateRelated={() => setRelatedDialogOpen(true)} />
           {activeTab === 'Reflection' && <ReflectionPromotionBar task={selectedTask} onPromote={promoteLesson} onUseAsStartingPoint={useReflectionAsStartingPoint} />}
-           <Workspace task={selectedTask} data={data} uiState={selectedTaskUIState} onUIStateChange={(patch) => updateTaskUIState(selectedTask.id, patch)} activeTab={activeTab} setActiveTab={setWorkspaceTab} setStage={setTaskStage} patchTask={patchTask} updateTask={updateTask} addHistory={addHistory} onBack={() => nav('dashboard')} onTogglePinned={() => togglePinned(selectedTask.id)} onArchive={() => archiveTask(selectedTask.id)} onRestore={() => restoreTask(selectedTask.id)} onCopy={copyText} newLogOpen={newLogOpen} setNewLogOpen={setNewLogOpen} logDraft={logDraft} setLogDraft={setLogDraft} addWorkLog={addWorkLog} promoteNote={promoteNote} newFeedbackOpen={newFeedbackOpen} setNewFeedbackOpen={setNewFeedbackOpen} feedbackDraft={feedbackDraft} setFeedbackDraft={setFeedbackDraft} addFeedback={addFeedback} addFollowUp={addFollowUp} onCreateRelated={() => setRelatedDialogOpen(true)} density={taskPageDensity} onDensityChange={setTaskPageDensity} messageType={messageType} setMessageType={setMessageType} messageTone={messageTone} setMessageTone={setMessageTone} messageFormat={messageFormat} setMessageFormat={setMessageFormat} messageOutput={messageOutput} setMessageOutput={setMessageOutput} />
+           <Workspace task={selectedTask} data={data} uiState={selectedTaskUIState} onUIStateChange={(patch) => updateTaskUIState(selectedTask.id, patch)} activeTab={activeTab} setActiveTab={setWorkspaceTab} setStage={setTaskStage} patchTask={patchTask} updateTask={updateTask} addHistory={addHistory} onBack={() => nav('dashboard')} onTogglePinned={() => togglePinned(selectedTask.id)} onArchive={() => archiveTask(selectedTask.id)} onRestore={() => restoreTask(selectedTask.id)} onCopy={copyText} newLogOpen={newLogOpen} setNewLogOpen={setNewLogOpen} logDraft={logDraft} setLogDraft={setLogDraft} addWorkLog={addWorkLog} promoteNote={promoteNote} newFeedbackOpen={newFeedbackOpen} setNewFeedbackOpen={setNewFeedbackOpen} feedbackDraft={feedbackDraft} setFeedbackDraft={setFeedbackDraft} addFeedback={addFeedback} addFollowUp={addFollowUp} onCreateRelated={() => setRelatedDialogOpen(true)} density={taskPageDensity} onDensityChange={setTaskPageDensity} messageType={messageType} setMessageType={setMessageType} messageTone={messageTone} setMessageTone={setMessageTone} messageFormat={messageFormat} setMessageFormat={setMessageFormat} messageOutput={messageOutput} setMessageOutput={setMessageOutput} onPromoteWorkPage={promoteWorkPageBlock} onSetDefaultTaskTab={setDefaultTaskTab} onExportFullBackup={exportFullBackup} onImportFullBackup={importFullBackup} />
+           {activeTab === 'Work Page' && <WorkPage task={selectedTask} data={data} updateTask={updateTask} onToast={setToast} onPromote={promoteWorkPageBlock} onSetDefaultTab={setDefaultTaskTab} onExportFullBackup={exportFullBackup} onImportFullBackup={importFullBackup} />}
         </>}
       </main>
       {view === 'workspace' && selectedTask && <RelatedWorkDrawer task={selectedTask} data={data} open={relatedPanelOpen} onClose={() => setRelatedPanelOpen(false)} onOpenTask={openTask} onOpenFamily={openFamily} onOpenPipeline={openPipeline} onCreateRelated={() => setRelatedDialogOpen(true)} onRemoveRelationship={removeRelationship} onLinkExisting={linkExistingTask} onMoveFamily={moveTaskToFamily} onFamilyContext={updateFamilyContext} onUpdateDecision={updateVariationDecision} />}
@@ -752,6 +818,8 @@ function SearchResults({ tasks, data, query, onOpen }: { tasks: Task[]; data: Ap
     if (task.jira.toLowerCase().includes(q) || task.submission.changelist.toLowerCase().includes(q)) reasons.push({ label: `Matched CL or Jira: ${task.submission.changelist || task.jira}`, tab: 'Submission' })
     if (JSON.stringify(task.reflection).toLowerCase().includes(q)) reasons.push({ label: 'Matched reflection or lesson', tab: 'Reflection' })
     if ((data.promotedLessons ?? []).some((lesson) => lesson.sourceTaskId === task.id && JSON.stringify(lesson).toLowerCase().includes(q))) reasons.push({ label: 'Matched promoted lesson', tab: 'Reflection' })
+    const workPageBlock = (task.workPage ?? []).find((block) => JSON.stringify(block).toLowerCase().includes(q))
+    if (workPageBlock) reasons.push({ label: `Matched Work Page ${workPageBlock.type}`, tab: 'Work Page' })
     if (text.includes(q) && !reasons.length) reasons.push({ label: 'Matched task workspace notes' })
     return { task, reasons }
   }).filter((item) => item.reasons.length)
@@ -1021,6 +1089,10 @@ interface WorkspaceShellProps {
   setMessageFormat: (value: MessageFormat) => void
   messageOutput: string
   setMessageOutput: (value: string) => void
+  onPromoteWorkPage: (taskId: string, blockId: string, target: WorkPagePromotionTarget, text: string) => void
+  onSetDefaultTaskTab: (tab: WorkPageDefaultTab) => void
+  onExportFullBackup: () => void
+  onImportFullBackup: (file: File) => void
 }
 
 interface OverviewProps {
@@ -1042,18 +1114,18 @@ interface OverviewProps {
 
 function LegacyWorkspace(props: WorkspaceShellProps) {
   const { task, activeTab, setActiveTab, setStage, patchTask, updateTask, addHistory, onBack, onTogglePinned, onArchive, onRestore, onCopy, newLogOpen, setNewLogOpen, logDraft, setLogDraft, addWorkLog, newFeedbackOpen, setNewFeedbackOpen, feedbackDraft, setFeedbackDraft, addFeedback, addFollowUp, messageType, setMessageType, messageTone, setMessageTone, messageFormat, setMessageFormat, messageOutput, setMessageOutput } = props
-  const tabs: WorkspaceTab[] = ['Overview', 'Work Log', 'Feedback', 'Testing', 'Submission', 'Messages', 'Reflection', 'History']
+  const tabs: WorkspaceTab[] = ['Overview', 'Work Page', 'Work Log', 'Feedback', 'Testing', 'Submission', 'Messages', 'Reflection', 'History']
   const reminders = impactReminders(task.impactTags)
   return <div className="page-content workspace-page"><div className="task-header"><div className="task-title-wrap"><button className="back-square" onClick={onBack} title="Back to All Tasks"><ArrowLeft size={16} /></button><div><div className="task-breadcrumb">ALL TASKS <span>/</span> {task.workType.toUpperCase()}</div><h1>{task.name}</h1><div className="task-meta"><span className="work-type-label">{task.workType}</span><span className="effect-type-label">{task.effectType}</span><span className={cn('status-badge', stageClass(task.stage))}>{task.stage}</span><span className={cn('priority-chip', task.priority.toLowerCase())}>{task.priority} priority</span>{task.jira && <span className="jira-link"><Link2 size={13} />{task.jira}</span>}<span className="updated-inline">Updated {formatRelative(task.updatedAt)}</span></div><div className="task-tag-strip">{task.tags.slice(0, 6).map((tag) => <span className="soft-chip" key={tag}>{tag}</span>)}</div><div className="task-next-action"><span>NEXT ACTION</span><strong>{task.nextAction || 'Define the next action'}</strong></div></div></div><div className="task-header-actions"><label className="stage-select"><span>Stage</span><select value={task.stage} onChange={(event) => setStage(event.target.value as Stage)}>{STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></label><button className="secondary-button" onClick={onTogglePinned}>{task.pinned ? '★ Pinned' : '☆ Pin task'}</button>{task.lifecycle === 'Archived' ? <button className="secondary-button" onClick={onRestore}><RefreshCw size={14} />Restore</button> : <button className="secondary-button" onClick={onArchive}><Archive size={14} />Archive</button>}<button className="secondary-button" onClick={() => setActiveTab('Messages')}><WandSparkles size={14} />Generate update</button><button className="primary-button" onClick={() => setActiveTab('Work Log')}><Plus size={14} />Add note</button></div></div><div className="workspace-tabs" role="tablist">{tabs.map((tab) => <button key={tab} role="tab" aria-selected={activeTab === tab} className={cn(activeTab === tab && 'active')} onClick={() => setActiveTab(tab)}>{tab === 'Overview' && <Target size={14} />}{tab === 'Work Log' && <Clock3 size={14} />}{tab === 'Feedback' && <MessageSquare size={14} />}{tab === 'Testing' && <ListChecks size={14} />}{tab === 'Submission' && <Send size={14} />}{tab === 'Messages' && <Sparkles size={14} />}{tab === 'Reflection' && <BookOpen size={14} />}{tab === 'History' && <RefreshCw size={14} />}{tab === 'Work Log' ? 'Notes' : tab === 'Testing' ? 'Test' : tab === 'Submission' ? 'Submit' : tab}{tab === 'Feedback' && task.feedback.length > 0 && <span className="tab-count">{task.feedback.length}</span>}{tab === 'Work Log' && task.workLogs.length > 0 && <span className="tab-count">{task.workLogs.length}</span>}</button>)}</div>{activeTab === 'Overview' && <Overview task={task} patchTask={patchTask} updateTask={updateTask} addHistory={addHistory} reminders={reminders} onOpenTab={setActiveTab} onAddFollowUp={addFollowUp} onSetStage={setStage} />}{activeTab === 'Work Log' && <WorkLogTab task={task} updateTask={updateTask} addHistory={addHistory} newOpen={newLogOpen} setNewOpen={setNewLogOpen} draft={logDraft} setDraft={setLogDraft} onSave={addWorkLog} />}{activeTab === 'Feedback' && <FeedbackTab task={task} updateTask={updateTask} addHistory={addHistory} newOpen={newFeedbackOpen} setNewOpen={setNewFeedbackOpen} draft={feedbackDraft} setDraft={setFeedbackDraft} onSave={addFeedback} onCopy={onCopy} />}{activeTab === 'Testing' && <TestingTab task={task} patchTask={patchTask} updateTask={updateTask} addHistory={addHistory} />}{activeTab === 'Submission' && <SubmissionTab task={task} patchTask={patchTask} updateTask={updateTask} addHistory={addHistory} onCopy={onCopy} />}{activeTab === 'Messages' && <MessagesTab task={task} messageType={messageType} setMessageType={setMessageType} messageTone={messageTone} setMessageTone={setMessageTone} messageFormat={messageFormat} setMessageFormat={setMessageFormat} output={messageOutput} setOutput={setMessageOutput} onCopy={onCopy} updateTask={updateTask} addHistory={addHistory} />}{activeTab === 'Reflection' && <ReflectionTab task={task} patchTask={patchTask} updateTask={updateTask} addHistory={addHistory} onSetStage={setStage} />}{activeTab === 'History' && <HistoryTab task={task} />}</div>
 }
 
 function Workspace(props: WorkspaceShellProps) {
-  const { task, data, uiState, onUIStateChange, activeTab, setActiveTab, setStage, patchTask, updateTask, addHistory, onBack, onTogglePinned, onArchive, onRestore, onCopy, newLogOpen, setNewLogOpen, logDraft, setLogDraft, addWorkLog, promoteNote, newFeedbackOpen, setNewFeedbackOpen, feedbackDraft, setFeedbackDraft, addFeedback, addFollowUp, onCreateRelated, density, onDensityChange, messageType, setMessageType, messageTone, setMessageTone, messageFormat, setMessageFormat, messageOutput, setMessageOutput } = props
+  const { task, data, uiState, onUIStateChange, activeTab, setActiveTab, setStage, patchTask, updateTask, addHistory, onBack, onTogglePinned, onArchive, onRestore, onCopy, newLogOpen, setNewLogOpen, logDraft, setLogDraft, addWorkLog, promoteNote, newFeedbackOpen, setNewFeedbackOpen, feedbackDraft, setFeedbackDraft, addFeedback, addFollowUp, onCreateRelated, density, onDensityChange, messageType, setMessageType, messageTone, setMessageTone, messageFormat, setMessageFormat, messageOutput, setMessageOutput, onPromoteWorkPage, onSetDefaultTaskTab } = props
   const [editOpen, setEditOpen] = useState(false)
   const [moreOpen, setMoreOpen] = useState(false)
   const [nextActionEditOpen, setNextActionEditOpen] = useState(false)
   const [nextActionDraft, setNextActionDraft] = useState(task.nextAction)
-  const tabs: WorkspaceTab[] = ['Overview', 'Work Log', 'Feedback', 'Testing', 'Submission', 'Messages', 'Reflection', 'History']
+  const tabs: WorkspaceTab[] = ['Overview', 'Work Page', 'Work Log', 'Feedback', 'Testing', 'Submission', 'Messages', 'Reflection', 'History']
   const saveNextAction = () => { patchTask({ nextAction: nextActionDraft.trim() }); setNextActionEditOpen(false) }
   const Overview = (overviewProps: OverviewProps) => <ProgressiveOverview {...overviewProps} data={data} uiState={uiState} onUIStateChange={onUIStateChange} onEditContext={() => setEditOpen(true)} />
   return <div className="page-content workspace-page lean-workspace-page"><div className="task-header"><div className="task-title-wrap"><button className="back-square" onClick={onBack} title="Back to All Tasks"><ArrowLeft size={16} /></button><div><div className="task-breadcrumb">ALL TASKS <span>/</span> {task.workType.toUpperCase()}</div><h1>{task.name}</h1><div className="task-meta lean-task-meta"><span className="work-type-label">{task.workType}</span><span className="effect-type-label">{task.effectType}</span>{task.mapMode && <span className="soft-chip">{task.mapMode}</span>}<span className={cn('status-badge', stageClass(task.stage))}>{task.stage}</span><span className="updated-inline">Updated {formatRelative(task.updatedAt)}</span></div><div className="task-tag-strip lean-tag-strip">{task.tags.slice(0, 6).map((tag) => <span className="soft-chip" key={tag}>{tag}</span>)}{task.tags.length > 6 && <span className="soft-chip">+{task.tags.length - 6} more</span>}</div><div className="task-next-action"><span>NEXT ACTION</span>{nextActionEditOpen ? <div className="next-action-editor"><input autoFocus value={nextActionDraft} onChange={(event) => setNextActionDraft(event.target.value)} placeholder="Add the next small action" /><button className="secondary-button" onClick={saveNextAction}><Check size={13} />Save</button></div> : <button className="next-action-display" onClick={() => { setNextActionDraft(task.nextAction); setNextActionEditOpen(true) }}><strong>{task.nextAction || 'Add the next small action'}</strong><Settings2 size={13} /></button>}</div>{task.blocker && <div className="task-blocker"><ShieldAlert size={14} /><span><b>BLOCKER</b>{task.blocker}</span></div>}</div></div><div className="task-header-actions lean-header-actions"><label className="stage-select"><span>Status</span><select value={task.stage} onChange={(event) => setStage(event.target.value as Stage)}>{STAGES.map((stage) => <option key={stage}>{stage}</option>)}</select></label><button className="secondary-button" onClick={() => setEditOpen(true)}><Settings2 size={14} />Edit task details</button><button className="secondary-button" onClick={onTogglePinned}>{task.pinned ? '★ Pinned' : '☆ Pin'}</button><button className="primary-button" onClick={() => setActiveTab('Work Log')}><Plus size={14} />Add note</button><div className="more-menu-wrap"><button className="secondary-button" onClick={() => setMoreOpen(!moreOpen)}><MoreHorizontal size={14} />More</button>{moreOpen && <div className="more-menu"><button onClick={() => { setActiveTab('Messages'); setMoreOpen(false) }}><WandSparkles size={13} />Generate update</button><button onClick={() => { task.lifecycle === 'Archived' ? onRestore() : onArchive(); setMoreOpen(false) }}>{task.lifecycle === 'Archived' ? <RefreshCw size={13} /> : <Archive size={13} />}{task.lifecycle === 'Archived' ? 'Restore' : 'Archive'}</button><button onClick={() => { setActiveTab('History'); setMoreOpen(false) }}><RefreshCw size={13} />View history</button></div>}</div><label className="density-toggle"><span>View</span><select value={density} onChange={(event) => onDensityChange(event.target.value as TaskPageDensity)}><option>Lean</option><option>Detailed</option></select></label></div></div><div className="workspace-tabs" role="tablist">{tabs.map((tab) => <button key={tab} role="tab" aria-selected={activeTab === tab} className={cn(activeTab === tab && 'active')} onClick={() => setActiveTab(tab)}>{tab === 'Overview' && <Target size={14} />}{tab === 'Work Log' && <Clock3 size={14} />}{tab === 'Feedback' && <MessageSquare size={14} />}{tab === 'Testing' && <ListChecks size={14} />}{tab === 'Submission' && <Send size={14} />}{tab === 'Messages' && <Sparkles size={14} />}{tab === 'Reflection' && <BookOpen size={14} />}{tab === 'History' && <RefreshCw size={14} />}{tab === 'Work Log' ? 'Notes' : tab === 'Testing' ? 'Test' : tab === 'Submission' ? 'Submit' : tab}{tab === 'Feedback' && task.feedback.length > 0 && <span className="tab-count">{task.feedback.length}</span>}{tab === 'Work Log' && task.workLogs.length > 0 && <span className="tab-count">{task.workLogs.length}</span>}</button>)}</div>{activeTab === 'Overview' && <Overview task={task} patchTask={patchTask} updateTask={updateTask} addHistory={addHistory} reminders={impactReminders(task.impactTags)} onOpenTab={setActiveTab} onAddFollowUp={addFollowUp} onSetStage={setStage} onCreateRelated={onCreateRelated} density={density} />}{activeTab === 'Work Log' && <LeanNotesTab task={task} newOpen={newLogOpen} setNewOpen={setNewLogOpen} draft={logDraft} setDraft={setLogDraft} onSave={addWorkLog} onPromote={promoteNote} />}{activeTab === 'Feedback' && <FeedbackTab task={task} updateTask={updateTask} addHistory={addHistory} newOpen={newFeedbackOpen} setNewOpen={setNewFeedbackOpen} draft={feedbackDraft} setDraft={setFeedbackDraft} onSave={addFeedback} onCopy={onCopy} />}{activeTab === 'Testing' && <TestingTab task={task} patchTask={patchTask} updateTask={updateTask} addHistory={addHistory} />}{activeTab === 'Submission' && <SubmissionTab task={task} patchTask={patchTask} updateTask={updateTask} addHistory={addHistory} onCopy={onCopy} />}{activeTab === 'Messages' && <MessagesTab task={task} messageType={messageType} setMessageType={setMessageType} messageTone={messageTone} setMessageTone={setMessageTone} messageFormat={messageFormat} setMessageFormat={setMessageFormat} output={messageOutput} setOutput={setMessageOutput} onCopy={onCopy} updateTask={updateTask} addHistory={addHistory} />}{activeTab === 'Reflection' && <ReflectionTab task={task} patchTask={patchTask} updateTask={updateTask} addHistory={addHistory} onSetStage={setStage} />}{activeTab === 'History' && <HistoryTab task={task} />}{editOpen && <TaskDetailsDrawer task={task} onClose={() => setEditOpen(false)} onSave={(patch) => { patchTask(patch); setEditOpen(false) }} />}</div>
